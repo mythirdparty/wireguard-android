@@ -19,6 +19,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -46,12 +47,14 @@ public final class ToolsInstaller {
     private final File localBinaryDir;
     private final Object lock = new Object();
     private final File nativeLibraryDir;
+    private final String magiskDir;
     @Nullable private Boolean areToolsAvailable;
     @Nullable private Boolean installAsMagiskModule;
 
     public ToolsInstaller(final Context context) {
         localBinaryDir = new File(context.getCacheDir(), "bin");
         nativeLibraryDir = new File(context.getApplicationInfo().nativeLibraryDir);
+        magiskDir = getMagiskDirectory();
         this.context = context;
     }
 
@@ -117,12 +120,12 @@ public final class ToolsInstaller {
     private int installMagisk() throws NoRootException {
         final StringBuilder script = new StringBuilder("set -ex; ");
 
-        script.append("trap 'rm -rf /sbin/.core/img/wireguard' INT TERM EXIT; ");
-        script.append(String.format("rm -rf /sbin/.core/img/wireguard/; mkdir -p /sbin/.core/img/wireguard%s; ", INSTALL_DIR));
-        script.append(String.format("printf 'name=WireGuard Command Line Tools\nversion=%s\nversionCode=%s\nauthor=zx2c4\ndescription=Command line tools for WireGuard\nminMagisk=1500\n' > /sbin/.core/img/wireguard/module.prop; ", BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE));
-        script.append("touch /sbin/.core/img/wireguard/auto_mount; ");
+        script.append(String.format("trap 'rm -rf %s/img/wireguard' INT TERM EXIT; ", magiskDir));
+        script.append(String.format("rm -rf %s/img/wireguard/; mkdir -p %s/img/wireguard%s; ", magiskDir, magiskDir, INSTALL_DIR));
+        script.append(String.format("printf 'name=WireGuard Command Line Tools\nversion=%s\nversionCode=%s\nauthor=zx2c4\ndescription=Command line tools for WireGuard\nminMagisk=1500\n' > %s/img/wireguard/module.prop; ", BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, magiskDir));
+        script.append(String.format("touch %s/img/wireguard/auto_mount; ", magiskDir));
         for (final String[] names : EXECUTABLES) {
-            final File destination = new File("/sbin/.core/img/wireguard" + INSTALL_DIR, names[1]);
+            final File destination = new File(String.format("%s/img/wireguard", magiskDir) + INSTALL_DIR, names[1]);
             script.append(String.format("cp '%s' '%s'; chmod 755 '%s'; chcon 'u:object_r:system_file:s0' '%s' || true; ",
                     new File(nativeLibraryDir, names[0]), destination, destination, destination));
         }
@@ -179,12 +182,25 @@ public final class ToolsInstaller {
         synchronized (lock) {
             if (installAsMagiskModule == null) {
                 try {
-                    installAsMagiskModule = Application.getRootShell().run(null, "[ -d /sbin/.core/mirror -a -d /sbin/.core/img -a ! -f /cache/.disable_magisk ]") == OsConstants.EXIT_SUCCESS;
+                    installAsMagiskModule = Application.getRootShell().run(null, String.format("[ -d %s/mirror -a -d %s/img -a ! -f /cache/.disable_magisk ]", magiskDir, magiskDir)) == OsConstants.EXIT_SUCCESS;
                 } catch (final Exception ignored) {
                     installAsMagiskModule = false;
                 }
             }
             return installAsMagiskModule;
         }
+    }
+
+    private String getMagiskDirectory() {
+        final ArrayList<String> output = new ArrayList<String>();
+        try {
+            Application.getRootShell().run(output, "su --version | cut -d ':' -f 1");
+        } catch (final Exception ignored) {
+            // Never gonna happen under a working system
+        }
+        if (output.get(0).startsWith("18"))
+            return "/sbin/.magisk";
+        else
+            return "/sbin/.core";
     }
 }
